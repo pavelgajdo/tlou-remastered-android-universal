@@ -18,6 +18,7 @@
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "video_core/renderer_vulkan/vk_scene_resolution.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/texture_cache/bc_decoder.h"
 #include "video_core/texture_cache/blit_helper.h"
 #include "video_core/texture_cache/image.h"
 
@@ -108,6 +109,31 @@ static u32 CopyBlockBytes(vk::Format format,vk::ImageAspectFlags aspect) {
     }
     return vk::blockSize(format);
 }
+// gow3: a decoded BC image (VideoCore::BcDecoder) holds texels, not blocks. Its uploads are
+// sized by its texels, and it copies only to and from decoded images of the same texel size;
+// any other copy is skipped and the destination keeps its guest data to upload.
+static vk::Format HostFormat(const VideoCore::Image& image) {
+    return image.bc_decoded ? VideoCore::BcDecodedFormat(image.info.pixel_format)
+                            : image.info.pixel_format;
+}
+
+static bool CanCopyDecoded(const VideoCore::Image& src, const VideoCore::Image& dst) {
+    if (!src.bc_decoded && !dst.bc_decoded) {
+        return true;
+    }
+    if (src.bc_decoded && dst.bc_decoded &&
+        vk::blockSize(HostFormat(src)) == vk::blockSize(HostFormat(dst))) {
+        return true;
+    }
+    static std::atomic<u32> logged{0};
+    if (logged.fetch_add(1, std::memory_order_relaxed) < 8) {
+        std::printf("Image copy skipped: %s -> %s (a decoded BC image)\n",
+                    vk::to_string(src.info.pixel_format).c_str(),
+                    vk::to_string(dst.info.pixel_format).c_str());
+    }
+    return false;
+}
+
 static u64 BufferImageCopySize(const vk::BufferImageCopy& copy,const vk::Format format) {
     const auto block=vk::blockExtent(format);
     return ImageCopyPlan::BufferSpan(copy.imageExtent.width,copy.imageExtent.height,
@@ -126,7 +152,7 @@ static void CheckImageCopies(const char* what, const VideoCore::Image& image,
         const u32 width = std::max(image.info.size.width >> level, 1u);
         const u32 height = std::max(image.info.size.height >> level, 1u);
         const u32 depth = std::max(image.info.size.depth >> level, 1u);
-        const u64 size = BufferImageCopySize(copy, image.info.pixel_format);
+        const u64 size = BufferImageCopySize(copy, HostFormat(image));
         const bool past_buffer = copy.bufferOffset + size > buffer.SizeBytes();
         const bool past_image =
             level >= image.info.resources.levels ||
@@ -376,7 +402,7 @@ void Runtime::UploadImage(VideoCore::Image* dst, const VideoCore::Buffer* src,
         Transit(dst, vk::ImageLayout::eTransferDstOptimal, vk::PipelineStageFlagBits2::eCopy,
                 vk::AccessFlagBits2::eTransferWrite);
     for (const auto& copy : upload_copies) {
-        const auto copy_size = BufferImageCopySize(copy, dst->info.pixel_format);
+        const auto copy_size = BufferImageCopySize(copy, HostFormat(*dst));
         needs_flush |= IsBufferAccessed(src, copy.bufferOffset, copy_size);
     }
     if (needs_flush) {
@@ -395,7 +421,7 @@ void Runtime::UploadImage(VideoCore::Image* dst, const VideoCore::Buffer* src,
     });
 
     for (const auto& copy : upload_copies) {
-        const auto copy_size = BufferImageCopySize(copy, dst->info.pixel_format);
+        const auto copy_size = BufferImageCopySize(copy, HostFormat(*dst));
         AccessBuffer(src, copy.bufferOffset, copy_size, vk::PipelineStageFlagBits2::eCopy,
                      vk::AccessFlagBits2::eTransferRead);
     }
@@ -466,6 +492,9 @@ void Runtime::DownloadImage(VideoCore::Image* src, const VideoCore::Buffer* dst,
 }
 
 void Runtime::CopyImage(VideoCore::Image* src, VideoCore::Image* dst) {
+    if (!CanCopyDecoded(*src, *dst)) {
+        return;
+    }
     const u32 num_mips = std::min(src->info.resources.levels, dst->info.resources.levels);
 
     // Format mismatch warning (safe but useful)
@@ -582,6 +611,9 @@ void Runtime::CopyImage(VideoCore::Image* src, VideoCore::Image* dst) {
 }
 
 void Runtime::CopyImageWithBuffer(VideoCore::Image* src,VideoCore::Image* dst) {
+    if (!CanCopyDecoded(*src, *dst)) {
+        return;
+    }
     SetBackingSamples(dst,dst->info.num_samples,false);
     SetBackingSamples(src,src->info.num_samples);
     const auto describe=[](const VideoCore::Image& image) {
@@ -644,6 +676,9 @@ void Runtime::CopyImageWithBuffer(VideoCore::Image* src,VideoCore::Image* dst) {
 }
 
 void Runtime::CopyMip(VideoCore::Image* src, VideoCore::Image* dst, u32 mip, u32 slice) {
+    if (!CanCopyDecoded(*src, *dst)) {
+        return;
+    }
     const auto dst_dim = dst->info.props.is_block ? 2 : 0;
     const auto mip_block_w = std::max(dst->info.size.width >> (mip + dst_dim), 1u);
     const auto mip_block_h = std::max(dst->info.size.height >> (mip + dst_dim), 1u);

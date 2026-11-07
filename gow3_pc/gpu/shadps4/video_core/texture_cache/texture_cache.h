@@ -35,6 +35,7 @@
 #include "video_core/texture_cache/image.h"
 #include "video_core/texture_cache/image_view.h"
 #include "video_core/texture_cache/sampler.h"
+#include "video_core/texture_cache/bc_decoder.h"
 #include "video_core/texture_cache/tile_manager.h"
 
 namespace AmdGpu {
@@ -529,6 +530,7 @@ private:
     PageManager& tracker;
     BlitHelper blit_helper;
     TileManager tile_manager;
+    BcDecoder bc_decoder;
     Common::SlotVector<Image> slot_images;
     Common::SlotVector<ImageView> slot_image_views;
     tsl::robin_map<u64, Sampler> samplers;

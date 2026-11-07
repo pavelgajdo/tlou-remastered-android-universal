@@ -41,6 +41,7 @@ TextureCache::TextureCache(const Vulkan::Instance& instance_, Vulkan::Scheduler&
     : instance{instance_}, scheduler{scheduler_}, runtime{runtime_}, liverpool{liverpool_},
       buffer_cache{buffer_cache_}, tracker{tracker_}, blit_helper{instance, scheduler},
       tile_manager{instance, scheduler, runtime, buffer_cache.GetStreamBuffer()},
+      bc_decoder{instance, scheduler, runtime},
       readback_linear_images{EmulatorSettings.IsReadbackLinearImagesEnabled()} {
 
     std::printf("GPU: deferred image readback %s (64 copies, 64 MiB pending limit)%s\n",
@@ -219,7 +220,8 @@ void TextureCache::ProcessTinyReadbacks() {
         }
         Image& image = slot_images[image_id];
         if (False(image.flags & ImageFlagBits::Registered) ||
-            False(image.flags & ImageFlagBits::GpuModified) || !IsTinyReadbackImage(image)) {
+            False(image.flags & ImageFlagBits::GpuModified) || !IsTinyReadbackImage(image) ||
+            image.bc_decoded) {
             continue;
         }
         const u32 bytes_per_texel = image.info.num_bits / 8;
@@ -364,7 +366,7 @@ void TextureCache::ProcessDownloadImages() {
 
 std::optional<TextureCache::PendingDownload> TextureCache::RecordImageDownload(ImageId image_id) {
     Image& image = slot_images[image_id];
-    if (False(image.flags & ImageFlagBits::GpuModified)) {
+    if (False(image.flags & ImageFlagBits::GpuModified) || image.bc_decoded) {
         return std::nullopt;
     }
     const u32 download_size = image.info.pitch * image.info.size.height * image.info.size.depth *
@@ -395,7 +397,7 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
     Image& image = slot_images[image_id];
     ResolveReadbacks(image.info.guest_address, image.info.guest_size, true,
                      ReadbackSource::ImageDownload);
-    if (False(image.flags & ImageFlagBits::GpuModified)) {
+    if (False(image.flags & ImageFlagBits::GpuModified) || image.bc_decoded) {
         return;
     }
     const u32 download_size = image.info.pitch * image.info.size.height * image.info.size.depth *
@@ -1546,7 +1548,11 @@ void TextureCache::RefreshImage(Image& image) {
                 copy.bufferRowLength = mip.row;
                 copy.bufferImageHeight = mip.height;
             }
-            runtime.UploadImage(&image, staging.buffer, image_copies);
+            const Buffer* source = staging.buffer;
+            if (image.bc_decoded) {
+                source = bc_decoder.Decode(image, source, image_copies);
+            }
+            runtime.UploadImage(&image, source, image_copies);
             return;
         }
     }
@@ -1558,7 +1564,11 @@ void TextureCache::RefreshImage(Image& image) {
         copy.bufferOffset += offset;
     }
 
-    runtime.UploadImage(&image, buffer, image_copies);
+    const Buffer* source = buffer;
+    if (image.bc_decoded) {
+        source = bc_decoder.Decode(image, source, image_copies);
+    }
+    runtime.UploadImage(&image, source, image_copies);
 }
 
 vk::Sampler TextureCache::GetSampler(const AmdGpu::Sampler& sampler,

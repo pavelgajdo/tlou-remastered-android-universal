@@ -80,7 +80,7 @@ fi
   --ks-pass pass:TLOU-Bionic-development --key-pass pass:TLOU-Bionic-development \
   --out "$apk" "$aligned"
 "$android_tools/apksigner" verify --verbose "$apk"
-"$android_tools/aapt" dump badging "$apk" | grep -q "package: name='com.daedalus.tlou.remastered'"
+"$android_tools/aapt" dump badging "$apk" | grep -q "package: name='com.daedalus.tlou.remastered.universal'"
 unzip -Z -1 "$apk" | grep -q 'lib/arm64-v8a/libgow3gpu.so'
 unzip -Z -1 "$apk" | grep -q 'lib/arm64-v8a/libgow3cpu.so'
 unzip -Z -1 "$apk" | grep -q 'lib/arm64-v8a/libgow3present.so'

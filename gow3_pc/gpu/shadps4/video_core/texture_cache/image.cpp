@@ -650,7 +650,8 @@ Image::Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime_,
             flags |= vk::ImageCreateFlagBits::e2DViewCompatibleEXT;
         }
     }
-    if (info.props.is_block && instance.IsBlockTexelViewSupported()) {
+    bc_decoded = instance.IsBcDecoded(info.pixel_format);
+    if (info.props.is_block && !bc_decoded && instance.IsBlockTexelViewSupported()) {
         flags |= vk::ImageCreateFlagBits::eBlockTexelViewCompatible;
     }
 

@@ -174,6 +174,9 @@ public:
         u32 vo_surface : 1;
     } usage{};
     bool scene_proxy = false; ///< gow3: SceneTargets holds a reduced-size proxy of it
+    /// BC data the driver cannot sample: the host image is uncompressed and uploads go through
+    /// BcDecoder. It is never copied back to guest memory.
+    bool bc_decoded = false;
     VAddr track_addr = 0;
     VAddr track_addr_end = 0;
     VAddr guest_begin = 0; ///< info.guest_address

@@ -4,7 +4,7 @@
   <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
   <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
   <application android:name="ro.cobrabm.fexdroid.TlouApplication" android:allowBackup="false" android:isGame="true" android:appCategory="game"
-               android:label="The Last of Us Remastered Android"
+               android:label="TLOU Remastered Universal"
                android:icon="@drawable/tlou_app_icon"
                android:usesCleartextTraffic="false"
                android:extractNativeLibs="true"

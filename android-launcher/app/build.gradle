@@ -5,7 +5,7 @@ android {
     namespace 'ro.cobrabm.fexdroid'
     compileSdk 35
     defaultConfig {
-        applicationId 'com.daedalus.tlou.remastered'
+        applicationId 'com.daedalus.tlou.remastered.universal'
         minSdk 30
         // Android 10/11 allow execution of extracted native payload in app-private files
         // for legacy target SDK. Keep separate from SDK version for compilation.

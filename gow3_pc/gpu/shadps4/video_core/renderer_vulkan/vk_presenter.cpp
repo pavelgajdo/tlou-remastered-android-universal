@@ -506,7 +506,7 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
                 u32 bytes = format == vk::Format::eR8Unorm ? 1
                             : format == vk::Format::eR8G8Unorm || depth16 ? 2
                             : bc16 ? 16 : (bc1 || format == vk::Format::eR16G16B16A16Sfloat ? 8 : 4);
-                if (image.info.num_samples != 1) continue;
+                if (image.info.num_samples != 1 || image.bc_decoded) continue;
                 if (!depth && !compressed && image.info.num_bits != bytes * 8) {
                     // Any other format: its texel (or 4x4 block) size.
                     compressed = image.info.props.is_block;

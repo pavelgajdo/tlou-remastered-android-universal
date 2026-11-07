@@ -6,9 +6,12 @@
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/texture_cache/image.h"
+#include "video_core/texture_cache/bc_decoder.h"
 #include "video_core/texture_cache/image_view.h"
 
+#include <cstdio>
 #include <magic_enum/magic_enum.hpp>
+#include <vulkan/vulkan_format_traits.hpp>
 
 namespace VideoCore {
 
@@ -141,6 +144,28 @@ ImageView::ImageView(const Vulkan::Instance& instance, const ImageViewInfo& info
             break;
         default:
             break;
+        }
+    }
+
+    // A decoded BC image holds texels: a view in another BC format of the same texel size reads
+    // them in that format's decoded one; any other view (an uncompressed alias of the blocks)
+    // gets the image's own decoded format.
+    if (image.bc_decoded) {
+        const vk::Format host = BcDecodedFormat(image.info.pixel_format);
+        const bool same_size = BcDecodeFormatIndex(format) >= 0 &&
+                               vk::blockSize(BcDecodedFormat(format)) == vk::blockSize(host);
+        if (!same_size) {
+            static bool noted = false;
+            if (!noted) {
+                noted = true;
+                std::printf("GPU: %s view of a decoded %s image uses its decoded texels\n",
+                            vk::to_string(format).c_str(),
+                            vk::to_string(image.info.pixel_format).c_str());
+            }
+        }
+        format = same_size ? BcDecodedFormat(format) : host;
+        if (info.is_storage && format == vk::Format::eR8G8B8A8Srgb) {
+            format = vk::Format::eR8G8B8A8Unorm;
         }
     }
 

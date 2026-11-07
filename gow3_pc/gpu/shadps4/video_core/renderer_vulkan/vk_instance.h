@@ -526,6 +526,11 @@ public:
     /// Determines if a format is supported for a set of feature flags.
     [[nodiscard]] bool IsFormatSupported(vk::Format format, vk::FormatFeatureFlags2 flags) const;
 
+    /// gow3: a BC format the driver cannot sample (Xclipse: BC4-BC7, Mali: all) is decoded
+    /// before upload (VideoCore::BcDecoder) into an image of an uncompressed format.
+    /// TLOU_BC_DECODE=1 decodes every BC format, on any driver.
+    [[nodiscard]] bool IsBcDecoded(vk::Format format) const;
+
 private:
     Instance(const Frontend::WindowSystemInfo&, s32, bool, bool);
     /// Creates the logical device opportunistically enabling extensions
@@ -615,6 +620,7 @@ private:
     bool mixed_float_dot_product{}; // gow3: VK_VALVE_shader_mixed_float_dot_product (FSR 4.1.1)
     bool supports_memory_budget{};
     bool supports_block_texel_view{};
+    u32 bc_decoded_formats{}; ///< bits by VideoCore::BcDecodeFormatIndex
     u64 total_memory_budget{};
     std::vector<size_t> valid_heaps;
 };
