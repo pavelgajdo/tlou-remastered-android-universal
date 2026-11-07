@@ -213,6 +213,39 @@ jobs:
             out/android-bionic/fex/CMakeFiles/CMakeConfigureLog.yaml
           if-no-files-found: ignore
 
+  # Universal fork: every APK built from a push to `universal` is tagged and published as a
+  # pre-release; mark it as a full release once it is confirmed on devices.
+  release:
+    needs: native
+    if: github.event_name == 'push' && github.ref == 'refs/heads/universal' && !contains(github.event.head_commit.message, '[native-only]')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: TheLastOfUsRemastered-Android-v0.1-arm64
+          path: built
+      - name: Tag and publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v0.1-universal.${{ github.run_number }}
+        run: |
+          apk="TLOU-Remastered-Universal-$TAG-arm64.apk"
+          cp built/TheLastOfUsRemastered-Android-v0.1-arm64.apk "$apk"
+          sha256sum "$apk" > "$apk.sha256"
+          cat > notes.md <<'NOTES'
+          TLOU Remastered Universal: the Android port with support for GPUs beyond Adreno.
+
+          - BC4/BC5/BC6H/BC7 textures (BC1-BC7 on Mali) are decoded on the GPU when the driver cannot sample them. This fixes black and garbled textures on Samsung Xclipse (Exynos) with the system driver.
+          - Installs next to the original app (app id `com.daedalus.tlou.remastered.universal`). Export your saves from the original app and import them here.
+
+          Pre-release: not yet confirmed on every device. Report problems with the logs ZIP (About, Export logs ZIP).
+          NOTES
+          gh release create "$TAG" "$apk" "$apk.sha256" --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --prerelease --title "TLOU Remastered Universal $TAG" \
+            --notes-file notes.md
+
   launcher:
     needs: changes
     if: needs.changes.outputs.interface_only == 'true'
