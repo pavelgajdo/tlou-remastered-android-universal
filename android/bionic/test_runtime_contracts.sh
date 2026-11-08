@@ -68,8 +68,17 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror \
 g++ -std=c++20 -O2 -Wall -Wextra -Werror -I gow3_pc \
   gow3_pc/tests/test_ui_composition.cpp -o "$test_dir/tlou-ui-composition"
 "$test_dir/tlou-ui-composition"
-grep -Fq 'options.put("resolution",proxy?"original":resolution);' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
-grep -Fq 'final boolean proxy="proxy".equals(p.getString("render_path","guest"));' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
+grep -Fq 'options.put("resolution",resolution);' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
+grep -Fq 'edit.remove("render_path");' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
+if grep -Fq 'choice(video,"render_path"' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java; then
+    echo 'ERROR: discarded resolution method selector is visible' >&2
+    exit 1
+fi
+if grep -Fq 'final boolean proxy=' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java; then
+    echo 'ERROR: legacy proxy renderer unexpectedly reenabled' >&2
+    exit 1
+fi
+grep -Fq 'env.put("GOW3_DMEM_REPORT_MB","4608");' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
 grep -Fq 'env.put("TLOU_UNIFIED_GUEST_UI","1");' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
 grep -Fq 'env.remove("GOW3_RENDER_RES");' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
 grep -Fq '"unified-direct-no-ui-blit"' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
@@ -93,6 +102,11 @@ grep -Fq 'struct.pack_into("<f", insn, 10, 1.0 / width)' android/tlou_patches.py
 g++ -std=c++20 -O2 -Wall -Wextra -Werror \
     gow3_pc/tests/test_tlou_movie_plane_layout.cpp -o "$test_dir/tlou-movie-layout"
 "$test_dir/tlou-movie-layout"
+g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+    gow3_pc/tests/test_tlou_movie_111_planes.cpp -o "$test_dir/tlou-movie-111-planes"
+"$test_dir/tlou-movie-111-planes"
+grep -Fq 'TLOU_MOVIE_111_LAYOUT' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
+grep -Fq 'if(Remap111(address,width,height,pitch,bits))return true;' gow3_pc/gpu/shim/gow3_movie.cpp
 cc -std=c11 -Wall -Wextra -Werror -x c -fsyntax-only \
     -include gow3_pc/gpu/shim/gow3_movie_bridge.h /dev/null
 grep -Fq 'env.put("GOW3_MOVIE_SIZE",actualSize);' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
@@ -112,16 +126,16 @@ grep -Fq 'TLOU movie NV12 shader:' gow3_pc/gpu/shim/gow3_movie.cpp
 grep -Fq 'TLOU movie NV12 texture:' gow3_pc/gpu/shim/gow3_movie.cpp
 
 
-# The previously tested spatial proxy mode remains an explicitly selected
-# compatibility fallback, not a hidden default.
-# Native 1080p aim with reduced scene proxies does not need temporal FSR.
+# Retain native spatial code tests for Vulkan robustness, but the launcher
+# must not enable that retired path (unified mode only).
 g++ -std=c++20 -O2 -Wall -Wextra -Werror -I gow3_pc \
   gow3_pc/tests/test_tlou_spatial_scene.cpp -o "$test_dir/tlou-spatial-scene"
 "$test_dir/tlou-spatial-scene"
 grep -Fq 'env.put("GOW3_UPSCALER","off");' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
-# Compatibility path kept, but no longer default; the working mira can be
-# recovered without reinstalling if guest-raster movie HUD is incompatible.
-grep -Fq 'env.put("TLOU_SPATIAL_SCENE","1");' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
+if grep -Fq 'env.put("TLOU_SPATIAL_SCENE","1");' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java; then
+    echo 'ERROR: removed spatial proxy was reactivated' >&2
+    exit 1
+fi
 grep -Fq '(active || spatial_session) ? preset : 0' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_temporal_upscaler.cpp
 grep -Fq '(spatial_session && scene_targets.Reduced())' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_temporal_upscaler.cpp
 grep -Fq 'RunUiOnly(color, depth);' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_temporal_upscaler.cpp
@@ -134,7 +148,16 @@ if grep -Fq 'EligibleBalanced(' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/v
     echo 'ERROR: discarded Balanced geometry synchronization was reintroduced' >&2
     exit 1
 fi
-grep -Fq 'env.put("GOW3_ASYNC_READBACK","1");' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
+# Global readback page protection was deliberately removed in the Android
+# profile: each physics/EOP result still has its own mandatory protection,
+# with Full geometry synchronization and Readback 1 unchanged.
+grep -Fq 'env.remove("GOW3_ASYNC_READBACK");' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
+if grep -Fq 'env.put("GOW3_ASYNC_READBACK","1");' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java; then
+    echo 'ERROR: global protection unexpectedly reenabled in Android profile' >&2
+    exit 1
+fi
+grep -Fq 'buffer_cache.DownloadRangesAsync(eop_readbacks, true, true);' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp
+grep -Fq 'if (!never_protect && (SafeReadbacks() || protect))' gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.cpp
 
 # CUSA00552 01.00: do not regress to the PC-only hash/stride fallback or
 # accidentally enable Readback 2 to compensate for stale physics results.
@@ -169,6 +192,12 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   gow3_pc/tests/test_tlou_pending_write_index.cpp -o "$test_dir/pending-write-index"
 "$test_dir/pending-write-index"
 
+# Flush constant-ring snapshots by packet, preserving exact byte coverage.
+g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_ring_flush_batch.cpp -o "$test_dir/ring-flush-batch"
+"$test_dir/ring-flush-batch"
+
 g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread gow3_pc/tests/test_cpu_phase_sample.cpp -o "$test_dir/cpu-phase-sample"
 "$test_dir/cpu-phase-sample" --correctness-only
 
@@ -181,6 +210,20 @@ if grep -Fq '"2 · Preciso' android-launcher/app/src/main/java/ro/cobrabm/fexdro
     echo 'ERROR: TLOU Precise readback was reintroduced' >&2
     exit 1
 fi
+
+# Fence-order regression: waiting for an earlier signal cannot drain newer copy
+# epochs. The same helper must make progress with the copy worker pool disabled.
+g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
+  gow3_pc/tests/test_tlou_deferred_signal_wait.cpp -o "$test_dir/tlou-deferred-signal-wait"
+"$test_dir/tlou-deferred-signal-wait"
+grep -Fq 'Detail::WaitForDeferredSignal(*deferred_signals_done, issued,' \
+  gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp
+grep -Fq 'done->notify_all();' \
+  gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp
+
+# Verify the logged 01.11 two-worker recovery without changing 01.00's
+# validated zero-worker default or introducing another untested frame scheduler.
+python3 android/tests/test_tlou_111_preparation_regression.py
 
 # v0.31 opt-in paths: exact memory bytes, packet-local bindings and copy completion.
 cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \

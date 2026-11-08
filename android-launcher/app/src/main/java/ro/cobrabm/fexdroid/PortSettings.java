@@ -27,9 +27,12 @@ final class PortSettings {
             "split_cs64","mapped_fault_readbacks","mapped_readbacks","gpu_profile",
             "prep_pool","cpu_trims","prefetch_pipelines","parallel_pipelines",
             "prep_workers","frames_ahead","descriptor_bulk","readback","sotc_precise_narrow",
+            "hud_gpu","hud_cpu",
             "compute_wait_fast","relaxed_skinning_fp"}) edit.remove(key);
         String limit=prefs(context).getString("fps_limit","60");
         if(!"30".equals(limit) && !"60".equals(limit))edit.putString("fps_limit","60");
+        // The proxy/compatibility renderer was retired. Ignore old saved choices.
+        edit.remove("render_path");
         edit.apply();
     }
 
@@ -45,8 +48,7 @@ final class PortSettings {
         // and original 1080p, NOT the proxy fallback in this build.
         // Never silently change the saved resolution.
         final String resolution=p.getString("resolution","original");
-        final boolean proxy="proxy".equals(p.getString("render_path","guest"));
-        options.put("resolution",proxy?"original":resolution);
+        options.put("resolution",resolution);
         // Xiaomi 23049PCD8G reported a real HALT after 806 seconds. The
         // OnePlus CPH2691 reported only a "long job" warning and a later
         // SIGTERM on user exit; it is NOT evidence of a guest deadlock.
@@ -69,53 +71,28 @@ final class PortSettings {
     static void environment(Context context,Map<String,String> env) {
         SharedPreferences p=prefs(context);
         String resolution=p.getString("resolution","original");
-        // Direct game mode: scene, gameplay HUD, crosshair and depth all
-        // use the selected resolution. The game's full/half post targets
-        // also follow this resolution, while the source movie decoding stays
-        // untouched. No extra Vulkan 720p->1080p HUD composition is inserted.
-        // "proxy" remains a separate optional compatibility method.
+        // The proven unified path is mandatory: no legacy proxy/composite mode.
+        // Keep the original movie decoder, scale scene/HUD/aim as one domain.
         final String scaledPreset=resolution.equals("720")?"1":
             resolution.equals("540")?"3":resolution.equals("360")?"4":null;
-        final String renderPath=p.getString("render_path","guest");
-        final boolean proxy="proxy".equals(renderPath);
         env.put("TLOU_EXPECT_SCENE_SIZE","1920x1080");
         env.put("GOW3_UPSCALER","off");
         env.put("GOW3_OUTPUT_RES","1920x1080");
+        env.remove("GOW3_RENDER_RES");
+        env.remove("GOW3_UPSCALE_PRESET");
+        env.remove("TLOU_SPATIAL_SCENE");
+        env.remove("TLOU_HOST_SCENE_MODE");
         if(scaledPreset!=null) {
             final String actualSize=resolution.equals("720")?"1280x720":
                 resolution.equals("540")?"960x540":"640x360";
+            env.put("TLOU_UNIFIED_GUEST_UI","1");
+            env.put("TLOU_EXPECT_SCENE_SIZE",actualSize);
             env.put("TLOU_EXPECT_HOST_SCENE",actualSize);
-            if(proxy) {
-                env.remove("GOW3_RENDER_RES");
-                env.remove("TLOU_UNIFIED_GUEST_UI");
-                env.remove("GOW3_MOVIE_SIZE");
-                env.put("GOW3_UPSCALE_PRESET",scaledPreset);
-                env.put("TLOU_SPATIAL_SCENE","1");
-                env.put("TLOU_HOST_SCENE_MODE","1");
-            } else {
-                // Scene/HUD/aim are patched to the same actualSize in eboot.
-                // Deliberately do not request any guest upscaler: that was
-                // forcing a second 1920x1080 HUD attachment and mixing it
-                // with 720p scene depth even with FSR temporal switched off.
-                env.remove("GOW3_RENDER_RES");
-                env.remove("GOW3_UPSCALE_PRESET");
-                env.remove("TLOU_SPATIAL_SCENE");
-                env.remove("TLOU_HOST_SCENE_MODE");
-                env.put("TLOU_UNIFIED_GUEST_UI","1");
-                env.put("TLOU_EXPECT_SCENE_SIZE",actualSize);
-                // Video-only NV12 adaptation: decoder stays native 1080p,
-                // while the movie's Y+UV sampling planes use the display's
-                // 720p layout. This flag is ignored by every gameplay shader.
-                env.put("GOW3_MOVIE_SIZE",actualSize);
-            }
+            env.put("GOW3_MOVIE_SIZE",actualSize);
         } else {
-            env.remove("GOW3_RENDER_RES");
             env.remove("TLOU_UNIFIED_GUEST_UI");
             env.remove("GOW3_MOVIE_SIZE");
-            env.remove("TLOU_SPATIAL_SCENE");
-            env.remove("TLOU_HOST_SCENE_MODE");
             env.remove("TLOU_EXPECT_HOST_SCENE");
-            env.remove("GOW3_UPSCALE_PRESET");
         }
 
         // Exact flags observed in launch.log of TLOU-Android-Logs (32).zip.
@@ -123,7 +100,9 @@ final class PortSettings {
         // the more recent actual run had the three below OFF.
         env.put("TLOU_MEMORY_WALK_ONCE","1");
         env.put("TLOU_RING_BINDING_CURSOR","1");
-        env.put("TLOU_DRAW_COUNTER_TRIM","0");
+        // Disable per-packet ARM64 clock barriers and shared stats atomics in normal gameplay.
+        // CPU thread-load diagnostics use pthread clocks; full pipe stats remain opt-in.
+        env.put("TLOU_DRAW_COUNTER_TRIM","1");
         env.put("GOW3_TLOU_COMPUTE_MEMO","0");
         env.put("GOW3_TLOU_HOST_COPY_BATCH","0");
         env.put("TLOU_SRT_HOT_READBACKS","1");
@@ -159,7 +138,12 @@ final class PortSettings {
         // previously suspected performance regression. No more Fast/Balanced
         // profiles which can return character deformation.
         env.put("TLOU_AUTO_SMALL_CS_READBACK","2");
-        env.put("GOW3_ASYNC_READBACK","1");
+        // Full geometry coverage remains enabled. Only the explicit EOP/physics
+        // results are page-protected via DownloadRangesAsync(..., protect=true).
+        // Global async protection also faults unrelated image and soft readbacks,
+        // unlike the other Android ports, and needlessly serializes guest threads.
+        // Important: do NOT disable GOW3_EOP_READBACK or downgrade Full coverage.
+        env.remove("GOW3_ASYNC_READBACK");
         // Coverage audit was completed in earlier device logs. Do not run
         // its atomic identity tracking on the hot compute-binding path during
         // normal gameplay; an explicit native diagnostic can still enable it.
@@ -171,7 +155,14 @@ final class PortSettings {
         env.put("GOW3_CPU_TRIMS","1");
         env.put("GOW3_PREFETCH_PIPELINES","1");
         env.put("GOW3_PARALLEL_PIPELINES","1");
+        // TLOU: previously tested draw-preparation workers increased CPU
+        // contention without raising FPS. Logs 19/20 still showed ~39 FPS
+        // despite 99.9% hits with two workers. Restore the proven zero-worker
+        // policy; do not keep the speculative normal-priority scanner or
+        // per-5-second hit instrumentation running in gameplay.
         env.put("GOW3_PREP_WORKERS","0");
+        env.remove("TLOU_PREP_NORMAL_PRIORITY");
+        env.remove("TLOU_PREP_HIT_STATS");
         env.put("GOW3_DEFERRED_READBACK","0");
         env.put("GOW3_STALE_READBACK","0");
 
@@ -197,6 +188,7 @@ final class PortSettings {
               .append(env.containsKey("TLOU_UNIFIED_GUEST_UI")?"unified-direct-no-ui-blit":
                       env.containsKey("TLOU_SPATIAL_SCENE")?"proxy-spatial-compat":"native");
         result.append("; temporal-fsr=off");
+        result.append("; frames-in-flight=").append(env.getOrDefault("GOW3_FRAMES_IN_FLIGHT","0"));
         result.append("; geometry-sync=full");
         result.append("; async-global-protect=").append(env.containsKey("GOW3_ASYNC_READBACK")?"on":"off");
         result.append("; geometry-sync policy=2 full only");

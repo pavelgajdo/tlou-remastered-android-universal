@@ -4,7 +4,7 @@ An Android adaptation of the PS4 **The Last of Us Remastered**, based on
 [ravencaio's PC port](https://github.com/ravencaio/tlou-remastered-pc).
 The game runs through an ARM64 Bionic runtime, FEX CPU translation and Vulkan rendering.
 
-**Version 0.1 · First public Android build**
+**Version 0.1.1 · Android release update**
 
 [Português (Brasil)](README.pt-BR.md) · [Release notes](RELEASE_NOTES.md) ·
 [Releases](https://github.com/erickmendes22/tlou-remastered-android/releases) · [Android source](https://github.com/erickmendes22/tlou-remastered-android/tree/tlou-ui-approval-log32-20261105) ·
@@ -36,26 +36,24 @@ switches are not exposed in the public interface.
 ## Requirements and supported game
 
 - **Android 11 or later**, with a 64-bit ARM Android environment and Vulkan support.
-- Your own PS4 game dump. The verified Android executable profile is **version
-  01.00**, SHA-256
-  `e5f0aa322f60bd90637cc10d83de08c77885b1921084021c630e04ed3d6febf7`.
-- The reference title is **CUSA00552**. Other regional title IDs are accepted
-  when they contain the same verified executable; a title ID alone does not
+- Your own PS4 game dump. Recognized executable profiles include **01.00** and
+  **01.11**. Patches are selected by validated executable SHA-256, not by
+  CUSA alone.
+- **CUSA00552** is the primary reference; recognized regional IDs such as
+  CUSA00556 must use a known, supported executable. A title ID alone does not
   establish patch compatibility.
 - Enough storage for the extracted game. PKG installation also needs room for
   extraction while the original package is present.
 
-Android gameplay testing has focused on **Redmagic 10 Pro / Snapdragon 8 Elite /
-Adreno 830**. Compatibility and performance across other devices are still being
-expanded. The Windows port's 01.11 requirements and PC FPS measurements do not
-represent this Android build.
+Android testing includes Redmagic 10 Pro and 11 Pro. Results vary by device,
+scene and system configuration. PC benchmarks do not predict Android FPS.
 
 ### Bundled driver selection
 
 | GPU family | Default bundled driver |
 | --- | --- |
-| Adreno 8xx | Turnip Gen8 V38 Patched |
-| Adreno 7xx / 6xx | Turnip 27.0.0 R1 |
+| Adreno 8xx | Turnip Gen8 V39 Patched |
+| Adreno 7xx / 6xx | Turnip 27.0.0 R2 |
 
 Driver selection/import remains available in settings. These defaults do not
 constitute validation of every GPU in those families.
@@ -72,10 +70,10 @@ constitute validation of every GPU in those families.
 
 Use the app's save export before uninstalling or clearing its data.
 
-## Status of version 0.1
+## Status of version 0.1.1
 
-This is an initial public build, with gameplay demonstrated on Android, rather
-than a claim of complete compatibility or a full-game playthrough.
+This update improves UI polish and update handling; gameplay has been demonstrated
+on Android, but a complete playthrough and universal compatibility are not claimed.
 
 - Shader compilation can cause pauses, especially on first visits to an area.
 - Selective physics-result synchronization addresses the reported character

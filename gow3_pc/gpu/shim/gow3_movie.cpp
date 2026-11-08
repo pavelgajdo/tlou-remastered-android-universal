@@ -1,5 +1,6 @@
 #include "gow3_movie.h"
 #include "gow3_movie_bridge.h"
+#include "tlou_movie_111_planes.h"
 #include "core/memory.h"
 
 #include <array>
@@ -206,8 +207,57 @@ bool MovieShaderConstant(std::uint32_t bits, float& patched) {
     }
 }
 
+// Version 01.11 alone may describe 720p movie Y/UV with 16-row
+// offsets, while the rescaled in-place NV12 buffer uses 64-row alignment.
+// Do not change 01.00 or unrelated game textures.
+bool Updated111MoviePlanes() {
+    static const bool enabled=[] {
+        const char* env=std::getenv("TLOU_MOVIE_111_LAYOUT");
+        return env && env[0]=='1';
+    }();
+    return enabled;
+}
+
+bool Remap111(std::uint64_t& address, std::uint32_t& width,
+              std::uint32_t& height, std::uint32_t& pitch,std::uint32_t bits) {
+    if(!Updated111MoviePlanes() || (bits!=8 && bits!=16))return false;
+    const Size& size=Display();
+    if(!size.width)return false;
+    const bool maybeY=(bits==8 && TlouMovie111::LumaShape(width,height,size.width,size.height));
+    const bool maybeUV=(bits==16 && TlouMovie111::ChromaShape(width,height,size.width,size.height));
+    if(!maybeY && !maybeUV)return false;
+    for(auto& frame:frames) {
+        const std::uint64_t base=frame.base.load(std::memory_order_acquire);
+        if(!base)continue;
+        const std::uint64_t layout=frame.layout.load(std::memory_order_acquire);
+        const std::uint32_t w=layout & 0xffff, h=(layout>>16)&0xffff;
+        const std::uint32_t p=(layout>>32)&0xffff, rows=(layout>>48)&0xffff;
+        // Do not remap a source 1080p picture whose scale failed.
+        if(w!=size.width || h!=size.height || p!=ScaledPitch() || rows!=ScaledRows())
+            continue;
+        if((maybeY && address==base) ||
+           (maybeUV && TlouMovie111::ChromaAddress(address,base,w,h))) {
+            const bool uv=maybeUV;
+            address=uv ? base+std::uint64_t(p)*rows : base;
+            width=uv ? w/2 : w;
+            height=uv ? h/2 : h;
+            pitch=uv ? ScaledChromaPitch()/2 : p;
+            static std::atomic<unsigned> corrected{0};
+            if(corrected.fetch_add(1,std::memory_order_relaxed)<8) {
+                std::printf("TLOU 01.11 movie plane: %s -> NV12 %ux%u pitch %u at %#llx\n",
+                            uv?"UV":"Y",width,height,pitch,
+                            static_cast<unsigned long long>(address));
+                std::fflush(stdout);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 bool Remap(std::uint64_t& address, std::uint32_t& width, std::uint32_t& height, std::uint32_t& pitch,
            std::uint32_t bits) {
+    if(Remap111(address,width,height,pitch,bits))return true;
     const Size& display = Display();
     if (!display.width) {
         return false;

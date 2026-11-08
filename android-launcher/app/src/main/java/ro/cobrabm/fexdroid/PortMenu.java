@@ -199,19 +199,13 @@ final class PortMenu {
                 choice("resolution","Resolução interna",
                     new String[]{"Original (1080p)","1280 × 720","960 × 540","640 × 360"},
                     new String[]{"original","720","540","360"},"original");
-                screenMode();
                 choice("fps_limit","Limite de FPS",
                     new String[]{"30 FPS","60 FPS"},
                     new String[]{"30","60"},"60");
                 toggle("vsync","VSync",true);
-                choice("render_path","Método de resolução",
-                    new String[]{"Unificado: cena e mira na mesma resolução",
-                                 "Compatibilidade: interface 1080p (proxies)"},
-                    new String[]{"guest","proxy"},"guest");
-                note("Reinicie o jogo para aplicar o método de resolução.");
+                note("Modo Unificado ativo: cena, interface e mira na mesma resolução.");
                 note("Sincronização da geometria: Completo (único modo). "
                      +"Preserva a correção das deformações.");
-                note("Reinicie o jogo para aplicar o método de resolução.");
                 break;
             case "patches":
                 heading("PATCHES");
@@ -231,7 +225,6 @@ final class PortMenu {
             case "settings":
                 heading("AJUSTES");
                 language();
-                screenMode();
                 toggle("gpu_turbo","Adreno Turbo (sem root)",false);
                 note("Usa KGSL sem root; respeita limites térmicos. Pode ser ativado ou desativado durante o jogo.");
                 toggle("launch_direct","Entrar direto no jogo",false);
@@ -248,8 +241,7 @@ final class PortMenu {
                         "Centro da tela","Inferior central","Central esquerdo",
                         "Central direito","Personalizada (arrastar)"},
                     new String[]{"0","1","2","3","4","5","6","7","8","-1"},"0");
-                toggle("hud_gpu","Uso da GPU",true);
-                toggle("hud_cpu","Uso da CPU (jogo)",true);
+                // Full HUD always shows GPU and CPU. No duplicate metrics toggles.
                 slider("hud_size","Tamanho do HUD",10,26,12);
                 slider("hud_opacity","Opacidade do fundo (%)",0,100,65);
                 toggle("touch_visible","Controles na tela",true);

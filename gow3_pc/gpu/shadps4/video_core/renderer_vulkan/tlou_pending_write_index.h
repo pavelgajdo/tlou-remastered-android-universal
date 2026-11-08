@@ -44,6 +44,31 @@ public:
         return count >= MinQuerySize && count <= Capacity;
     }
 
+    static constexpr std::size_t MinLiveQuerySize = 128;
+    [[nodiscard]] bool CanQueryLive(std::size_t count) const noexcept {
+        return count >= MinLiveQuerySize && count <= Capacity;
+    }
+
+    // The read-only constant ring can skip a guest snapshot only if no
+    // overlapping output from Stage B remains unretired. Unlike merging
+    // output writes (inclusive adjacency), a read overlap is STRICT and the
+    // caller's reached-position predicate is authoritative. Bucket collisions
+    // are filtered against exact endpoints and never cause a false miss.
+    template <class IsLive>
+    [[nodiscard]] bool AnyLiveOverlap(const std::vector<Write>& writes,
+                 std::uint64_t begin, std::uint64_t end, IsLive&& live) const {
+        if (!CanQueryLive(writes.size()) || end <= begin) return false;
+        bool found = false;
+        index.ForCandidates(begin, Span(begin, end), [&](std::size_t slot) {
+            if (found || slot >= writes.size()) return;
+            const Write& write = writes[slot];
+            if (begin < write.end && write.begin < end && live(write)) {
+                found = true;
+            }
+        });
+        return found;
+    }
+
     void Set(std::size_t slot, const Write& write) noexcept {
         if (slot >= Capacity) return;
         index.Replace(slot, write.begin, Span(write.begin, write.end));

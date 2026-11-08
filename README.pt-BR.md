@@ -4,7 +4,7 @@ Adaptação do **The Last of Us Remastered de PS4 para Android**, baseada no
 [port de PC de ravencaio](https://github.com/ravencaio/tlou-remastered-pc), com
 runtime Bionic ARM64, tradução de CPU pelo FEX e renderização Vulkan.
 
-**Versão 0.1 · Primeira build pública para Android**
+**Versão 0.1.1 · Atualização do port Android**
 
 [English](README.md) · [Notas da versão](RELEASE_NOTES.md) ·
 [Releases](https://github.com/erickmendes22/tlou-remastered-android/releases) · [Código Android](https://github.com/erickmendes22/tlou-remastered-android/tree/tlou-ui-approval-log32-20261105) ·
@@ -36,23 +36,22 @@ internamente. Os controles experimentais de medição foram retirados da interfa
 ## Requisitos e versão do jogo
 
 - **Android 11 ou superior**, com ambiente Android ARM de 64 bits e suporte a Vulkan.
-- Uma cópia própria do jogo de PS4. O perfil Android validado é o executável
-  **01.00**, SHA-256
-  `e5f0aa322f60bd90637cc10d83de08c77885b1921084021c630e04ed3d6febf7`.
-- O título de referência é **CUSA00552**. Outras regiões são reconhecidas quando
-  usam o mesmo executável validado; apenas o código CUSA não garante os patches.
+- Uma cópia própria do jogo de PS4. O port reconhece executáveis **01.00** e
+  **01.11**; os patches são selecionados pelo SHA-256 do executável validado,
+  não apenas pelo CUSA.
+- O título de referência é **CUSA00552**; IDs regionais como CUSA00556
+  exigem um executável conhecido. O CUSA sozinho não garante os patches.
 - Espaço para o jogo extraído. A instalação por PKG precisa de espaço para a
   extração enquanto o pacote original ainda está armazenado.
 
-Os testes de gameplay no Android se concentraram no **Redmagic 10 Pro,
-Snapdragon 8 Elite e Adreno 830**. A cobertura de outros aparelhos está em
-expansão. Os requisitos de jogo 01.11 e os resultados de FPS do port de Windows
-não são os requisitos nem as medições desta build Android.
+Os testes no Android incluem Redmagic 10 Pro e 11 Pro. O desempenho varia
+conforme aparelho, cena e configuração. Os benchmarks de PC não se aplicam
+diretamente ao Android.
 
 | Família da GPU | Driver incluído por padrão |
 | --- | --- |
-| Adreno 8xx | Turnip Gen8 V38 Patched |
-| Adreno 7xx / 6xx | Turnip 27.0.0 R1 |
+| Adreno 8xx | Turnip Gen8 V39 Patched |
+| Adreno 7xx / 6xx | Turnip 27.0.0 R2 |
 
 É possível selecionar ou importar outro driver nos ajustes. Essa seleção
 padrão não confirma compatibilidade com todos os modelos dessas famílias.
@@ -69,10 +68,10 @@ padrão não confirma compatibilidade com todos os modelos dessas famílias.
 
 Exporte os saves antes de desinstalar o aplicativo ou limpar os dados dele.
 
-## Estado da versão 0.1
+## Estado da versão 0.1.1
 
-Esta é uma primeira build pública com gameplay demonstrado em Android.
-A compatibilidade completa e a campanha inteira ainda não foram validadas no port.
+Esta atualização aprimora a interface e a preservação das atualizações do jogo,
+sem afirmar compatibilidade universal ou campanha completa validada.
 
 - A compilação de shaders pode causar pausas, principalmente ao entrar em uma
   área pela primeira vez.

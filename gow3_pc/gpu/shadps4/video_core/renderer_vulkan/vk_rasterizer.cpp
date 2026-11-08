@@ -1739,6 +1739,20 @@ bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
     if (!PendingFilterHit(address, end)) {
         return false;
     }
+    // For large sets, use the same spatial index maintained by
+    // NotePendingGpuWrite. It answers the strictly-overlapping, not-yet-
+    // recorded predicate without walking all pending writes on every
+    // read-only constant in the hot ring path. Below 128 entries the
+    // original linear scan is cheaper; above 2048 it is the fallback.
+    static const bool indexed = [] {
+        const char* env = std::getenv("GOW3_PENDING_WRITE_INDEX");
+        return !(env && env[0] == '0');
+    }();
+    if (indexed && pending_write_index.CanQueryLive(pending_writes.size())) {
+        return pending_write_index.AnyLiveOverlap(
+            pending_writes, address, end,
+            [this](const PendingWrite& write) { return !draw_pipe->Reached(write.position); });
+    }
     for (const auto& write : pending_writes) {
         if (address < write.end && write.begin < end && !draw_pipe->Reached(write.position)) {
             return true;
@@ -1808,7 +1822,16 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
         } else {
             memory->CopySparseMemory(address, dst, size);
         }
-        constant_ring->Flush(*offset, size);
+        // The batch path flushes all packet snapshots once, before the
+        // draw pipe publishes the packet to the Vulkan recording thread.
+        // A/B fallback preserves the original per-buffer flush behavior.
+        static const bool batch_flush = [] {
+            const char* env = std::getenv("GOW3_RING_BATCH_FLUSH");
+            return !(env && env[0] == '0');
+        }();
+        if (!batch_flush) {
+            constant_ring->Flush(*offset, size);
+        }
         if (LateConstantsEnabled()) {
             // gow3 21 Oct 2026: checked at the submission of this draw (its ring position).
             const u64 due = constant_ring->Position();
@@ -1837,7 +1860,21 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
         if (address == 0 || vsharp.GetSize() == 0) {
             continue;
         }
-        const u64 size = memory->ClampRangeSize(address, vsharp.GetSize());
+        // Stage A only snapshots read-only V# ranges of at most 16KiB.
+        // For larger declarations, scanning guest VMAs beyond the first
+        // 16KiB+1 is wasted: a mapped prefix longer than the stream limit
+        // will not be copied, while any shorter contiguous prefix is
+        // identical to the original full-size clamp. Written bindings
+        // still require the EXACT full extent for pending-write tracking.
+        const u64 raw_size = vsharp.GetSize();
+        static const bool clamp_cap = [] {
+            const char* env = std::getenv("GOW3_RING_CLAMP_CAP");
+            return !(env && env[0] == '0');
+        }();
+        const u64 query_size = !desc.is_written && clamp_cap
+            ? std::min<u64>(raw_size, VideoCore::BufferCache::STREAM_THRESHOLD + 1)
+            : raw_size;
+        const u64 size = memory->ClampRangeSize(address, query_size);
         if (desc.is_written) {
             NotePendingGpuWrite(address, size);
             continue;
@@ -1884,6 +1921,7 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
                             Shader::MaxStageTypes>
         rings;
     u32 num_stages = 0;
+    const u64 ring_batch_start = constant_ring ? constant_ring->Position() : 0;
     u32 size = sizeof(DrawPacket) + AlignPacket(num_blocks * sizeof(u16)) +
                num_blocks * AmdGpu::RegDirty::BlockWords * sizeof(u32);
     for (const auto* stage : stages) {
@@ -1908,6 +1946,17 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
     }
     if (indirect) {
         size += AlignPacket(sizeof(IndirectDraw));
+    }
+    // Every ring snapshot was captured at its original point in guest
+    // command order. Flush non-coherent host memory once per packet before
+    // Stage B can observe any of its descriptor bindings; never defer the
+    // actual guest snapshot, only the host-to-device visibility barrier.
+    static const bool batch_ring_flush = [] {
+        const char* env = std::getenv("GOW3_RING_BATCH_FLUSH");
+        return !(env && env[0] == '0');
+    }();
+    if (constant_ring && batch_ring_flush) {
+        constant_ring->FlushPacket(ring_batch_start);
     }
     const u32 interval = VerifyInterval();
     const bool verify = interval && (draw_pipe->packets % interval) == 0;

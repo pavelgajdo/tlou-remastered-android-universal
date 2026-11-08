@@ -255,6 +255,62 @@ PERFORMANCE_RESOLUTIONS = {
 # This profile does NOT modify video content, movie decoder, codecs or source
 # frame dimensions. The video path may still present a native-size frame.
 LOW_RES_SCENE = {"720": (1280, 720), "540": (960, 540), "360": (640, 360)}
+# 01.11 verified from the user's original 24,220,371-byte CUSA00552 SELF.
+# The previous 01.00 32-site table is NOT reused here. The newer executable
+# stores dimensions in screeninfo.cfg defaults and a preset selector at
+# 0xAB0600, while its framebuffer creation sites moved to 0xAD47xx.
+# Every original span below has been checked against this exact SELF.
+# Other 01.11 variants deliberately retain Original until independently checked.
+# The owner's second 01.11 ELF differs by only 28 bytes in the
+# 0x6C74E9 -> 0xC2C860 pointer-guard trampoline, outside ALL 24 validated
+# 01.11 stability, effects, and unified-resolution patch spans.
+# Both SELF variants were independently checked (24/24 original byte guards).
+RESOLUTION_111_SELF_SHA256 = frozenset({
+    "3cfa475f88ca68485b6b9230e62b84e195cdbe19e6f7295c110b8dcf8f20884e",
+    "31f3b0d120803878d10a7184d139c545de334394dd7dd6ca6058a7c995e484a7",
+})
+RESOLUTION_111_GUARDS = {
+    0xAB05D6: "c7470880070000c7470c38040000",  # screen-info instance
+    0xAB095D: "c7400880070000c7400c38040000",  # global screen-info
+    0x116BF10: "8007000038040000f00000000e010000",  # screen-info defaults
+    0x116BF30: "8007000038040000f00000000e010000",  # persistent defaults
+    0xAB0600: "ffce83fe0777194863ce488d058fb9",  # screen-info mode selector
+    0xAD478C: "b98007000041b838040000",  # full-size framebuffer
+    0xAD47E7: "b9c003000041b81c020000",  # half-size framebuffer
+    0x115FB9C: "d6b9723a00008744",  # HUD coordinate height inverse / height
+}
+
+
+def scene_aim_resolution_patches_111(resolution):
+    """Version-guarded 01.11 scene/HUD/post targets; keep video sources native."""
+    width, height = LOW_RES_SCENE[resolution]
+    u32 = lambda n: struct.pack("<I", n)
+    # Skip the old preset lookup entirely (its smallest preset is 1920x1080).
+    # mov eax,width; mov ecx,height; jmp 0xAB062A (original field stores and
+    # ratio/quarter-resolution calculations remain untouched).
+    selector = (b"\xb8" + u32(width) + b"\xb9" + u32(height) +
+                b"\xe9" + struct.pack("<i", 0xAB062A - (0xAB0600 + 15)))
+    replacements = {
+        0xAB05D6: bytes.fromhex("c74708") + u32(width) + bytes.fromhex("c7470c") + u32(height),
+        0xAB095D: bytes.fromhex("c74008") + u32(width) + bytes.fromhex("c7400c") + u32(height),
+        0x116BF10: struct.pack("<4I", width, height, width // 8, height // 4),
+        0x116BF30: struct.pack("<4I", width, height, width // 8, height // 4),
+        0xAB0600: selector,
+        0xAD478C: b"\xb9" + u32(width) + b"\x41\xb8" + u32(height),
+        0xAD47E7: b"\xb9" + u32(width // 2) + b"\x41\xb8" + u32(height // 2),
+        0x115FB9C: struct.pack("<ff", 1.0 / height, float(height)),
+    }
+    if replacements.keys() != RESOLUTION_111_GUARDS.keys():
+        raise ValueError("Perfil 01.11 de resolução incompleto")
+    out = []
+    for address, original in RESOLUTION_111_GUARDS.items():
+        before, after = bytes.fromhex(original), replacements[address]
+        if len(before) != len(after):
+            raise ValueError(f"01.11: tamanho inválido em {address:#x}")
+        out.append((address, original, after.hex()))
+    return out
+
+
 AIM_NORMALIZATION_ADDRESS = 0x9D4023
 GAME_UI_NATIVE_OVERRIDES = {
     0x91F6E8: "41bf8007000041bc38040000909090",
@@ -317,7 +373,7 @@ def scene_aim_resolution_patches(resolution):
     return patches
 
 
-def selected_options(options, profile="01.00"):
+def selected_options(options, profile="01.00", self_sha=None):
     options = options or {}
     if not isinstance(options, dict):
         raise ValueError("Configuração de patches inválida")
@@ -326,11 +382,12 @@ def selected_options(options, profile="01.00"):
         raise ValueError("Resolução não suportada")
     selected = {}
     if resolution != "original":
-        if profile != "01.00":
-            # 01.11 scene/UI/post-process/aim offsets are different. Guard
-            # against accidentally applying the verified 01.00 layout.
-            raise ValueError("Patch de resolução 01.11 ainda não validado; selecione Original")
-        selected["resolution-" + resolution] = scene_aim_resolution_patches(resolution)
+        if profile == "01.00":
+            selected["resolution-" + resolution] = scene_aim_resolution_patches(resolution)
+        elif profile == "01.11" and self_sha in RESOLUTION_111_SELF_SHA256:
+            selected["resolution-" + resolution] = scene_aim_resolution_patches_111(resolution)
+        else:
+            raise ValueError("Patch de resolução 01.11 ainda não validado para este SHA-256")
     effects = PERFORMANCE_EFFECTS if profile == "01.00" else PERFORMANCE_EFFECTS_111
     for name, changes in effects.items():
         if type(options.get(name, False)) is not bool:
@@ -376,7 +433,14 @@ def write_selected(source, prepared, options):
         (prepared / "patch-validation.json").unlink(missing_ok=True)
         print("Eboot sem perfil Android de patches conhecido; removidos patches antigos.", flush=True)
         return
-    requested = selected_options(options, profile)
+    effective = dict(options or {})
+    # Never apply 01.00 offsets to an unknown 01.11 binary variant.
+    # The supplied 3cfa... SELF has a separately validated guarded layout.
+    if (profile == "01.11" and digest not in RESOLUTION_111_SELF_SHA256 and
+            effective.get("resolution", "original") != "original"):
+        print("Aviso: resolução reduzida sem assinatura validada nesta variante do eboot 01.11; usando Original.", flush=True)
+        effective["resolution"] = "original"
+    requested = selected_options(effective, profile, digest)
     spec = importlib.util.spec_from_file_location("tlou_patch_writer", source / "tools/probe_tlou.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -400,7 +464,7 @@ def write_selected(source, prepared, options):
             if kind == 1 and start <= at and at + length <= start + filesz:
                 return elf[offset + at-start:offset + at-start+length]
         return b""
-    patches = base_patches_for(options, profile)
+    patches = base_patches_for(effective, profile)
     patches.update(requested)
     for name, changes in patches.items():
         for at, expected, _ in changes:
@@ -410,6 +474,8 @@ def write_selected(source, prepared, options):
     module.image_patches(elf_path, temp, patches)
     temp.replace(prepared / "patches.bin")
     report = {"profile": digest, "game_version": profile, "selected": list(requested),
-              "resolution": (options or {}).get("resolution", "original"), "validated": True}
+              "resolution": effective.get("resolution", "original"),
+              "requested_resolution": (options or {}).get("resolution", "original"),
+              "validated": True}
     (prepared / "patch-validation.json").write_text(json.dumps(report, indent=2)+"\n")
     print("Patches validados: " + (", ".join(requested) or "Original; correções de estabilidade"), flush=True)

@@ -90,6 +90,24 @@ struct Model {
             filter==rhs.filter&&min==rhs.min&&max==rhs.max&&hint==rhs.hint&&tick==rhs.tick;
     }
 };
+// Compare every live GPU-write overlap with the exact Stage-A read predicate:
+ // strictly overlapping half-open intervals, non-retired positions, including
+ // entries still uncommitted. Read-side queries must never return a false
+ // negative, since that would snapshot stale guest constants.
+bool LegacyLive(const std::vector<Write>& writes,u64 begin,u64 end,u64 retired) {
+    for(const auto& w:writes) {
+        if(begin<w.end && w.begin<end &&
+           (w.position==Uncommitted || w.position>retired))return true;
+    }
+    return false;
+}
+bool IndexedLive(const Model& model,u64 begin,u64 end,u64 retired) {
+    if(!model.index.CanQueryLive(model.writes.size()))
+        return LegacyLive(model.writes,begin,end,retired);
+    return model.index.AnyLiveOverlap(model.writes,begin,end,[retired](const Write& w) {
+        return w.position==Uncommitted || w.position>retired;
+    });
+}
 void Verify(){
     Model reference,optimized;
     std::mt19937_64 rng(0x246ed19);
@@ -113,6 +131,16 @@ void Verify(){
         reference.Note(lo,size,pending,false);
         optimized.Note(lo,size,pending,true);
         if(i%307==0)assert(reference.Equals(optimized));
+        if(i%113==0) {
+            for(int q=0;q<12;++q) {
+                const u64 base=hot[rng()%hot.size()];
+                const u64 read=base?base+((rng()%5)==0?65536u:rng()%8192):0x7ffff000u;
+                const u64 size=1+rng()%65536;
+                const u64 retired=optimized.tick>30 ? optimized.tick-(rng()%31):0;
+                assert(LegacyLive(reference.writes,read,read+size,retired)==
+                       IndexedLive(optimized,read,read+size,retired));
+            }
+        }
     }
     assert(reference.Equals(optimized));
     assert(optimized.hint_hits>20000);
@@ -147,6 +175,12 @@ void Verify(){
         if(i%29==0)assert(a.Equals(b));
     }
     assert(a.Equals(b));
+    for(u32 i=0;i<4096;++i) {
+        const u64 lo=0x10000000+u64(i%2400)*0x20000;
+        const u64 retired=b.tick>u64(i%512)?b.tick-(i%512):0;
+        assert(LegacyLive(a.writes,lo,lo+65536,retired)==
+               IndexedLive(b,lo,lo+65536,retired));
+    }
     std::printf("pending index correctness: 180000 randomized writes and 2400-range overflow, inclusive boundaries, retirement/reindex passed; skipped duplicate filter markings=%llu\n",
                 (unsigned long long)(reference.marks-optimized.marks));
 }
@@ -160,7 +194,49 @@ std::vector<Event> Workload(int reuse){
     }
     return result;
 }
+// 512/1024 pending writes, with most read-only constant buffers not
+// touching in-flight writes: mirrors the expensive RingBindings false path.
+// Exact predicates (including fence retirement) are compared at each step.
 static volatile u64 sink;
+void BenchmarkLive(unsigned n){
+    Model model;
+    for(unsigned i=0;i<n;++i) {
+        const u64 a=0x20000000+u64(i)*0x10000;
+        model.Note(a,8192,false,true);
+    }
+    const u64 retired=model.tick/2;
+    struct Query {u64 begin,end;};
+    std::vector<Query> queries;queries.reserve(280000);
+    for(u32 i=0;i<280000;++i) {
+        const u64 slot=(u64(i)*3571u)%n;
+        const u64 start=0x20000000+slot*0x10000+
+              ((i%7==0)?4096u:(i%7==1)?8192u:32768u);
+        queries.push_back({start,start+1024u});
+    }
+    for(const auto& q:queries) {
+        assert(LegacyLive(model.writes,q.begin,q.end,retired)==
+               IndexedLive(model,q.begin,q.end,retired));
+    }
+    auto run=[&](bool indexed) {
+        u64 sum=0;
+        auto t0=std::chrono::steady_clock::now();
+        for(const auto& q:queries) {
+            sum+=indexed?IndexedLive(model,q.begin,q.end,retired):
+                          LegacyLive(model.writes,q.begin,q.end,retired);
+        }
+        sink=sink+sum;
+        return std::chrono::duration<double,std::milli>(
+             std::chrono::steady_clock::now()-t0).count();
+    };
+    std::array<double,7> before{},after{};
+    for(size_t i=0;i<before.size();++i){
+        if(i%2){after[i]=run(true);before[i]=run(false);}
+        else{before[i]=run(false);after[i]=run(true);}
+    }
+    std::sort(before.begin(),before.end());std::sort(after.begin(),after.end());
+    std::printf("pending live-read %u ranges, 280000 queries: old=%.3fms indexed=%.3fms ratio=%.3f (host, not FPS)\n",
+                n,before[3],after[3],after[3]/before[3]);
+}
 double Run(const std::vector<Event>& events,bool indexed){
     Model state;
     const auto start=std::chrono::steady_clock::now();
@@ -182,6 +258,6 @@ void Cost(int reuse){
 }
 int main(int argc,char** argv){
     Verify();
-    if(argc==1){Cost(90);Cost(70);Cost(40);return 0;}
+    if(argc==1){Cost(90);Cost(70);Cost(40);BenchmarkLive(512);BenchmarkLive(1024);return 0;}
     return argc==2&&std::string_view(argv[1])=="--correctness-only"?0:2;
 }

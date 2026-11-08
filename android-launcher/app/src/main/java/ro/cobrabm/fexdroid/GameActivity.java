@@ -184,10 +184,14 @@ public final class GameActivity extends Activity {
     }
 
     private void error(String message) {
+        // Keep the technical reason in the local diagnostic archive. Never
+        // display a stack trace, private storage path or the raw log in-game.
         RunLog.write(this,"ERRO: "+message);
-        handler.post(()->{if(!isFinishing()&&!isDestroyed())new AlertDialog.Builder(this).setTitle(TlouLanguage.t(this,"TLOU — erro de inicialização"))
-            .setMessage(message).setNeutralButton(TlouLanguage.t(this,"Ver logs"),(d,w)->showLog())
-            .setPositiveButton(TlouLanguage.t(this,"Voltar ao menu"),(d,w)->stopAndExit()).show();});
+        handler.post(()->{
+            if(isFinishing()||isDestroyed()||closing.get())return;
+            GameFailureMessage reason=GameFailureMessage.classify(message,tailLog());
+            GameFailureScreen.show(this,reason,this::stopAndExit);
+        });
     }
 
     private void refreshFps() {
@@ -201,8 +205,7 @@ public final class GameActivity extends Activity {
                 String mode=p.getString("hud_mode","full");
                 double cpu=hudTelemetry==null?Double.NaN:hudTelemetry.cpuPercent();
                 double gpu=hudTelemetry==null?Double.NaN:hudTelemetry.gpuPercent();
-                status.setText(HudPresentation.text(mode,fps,gpu,cpu,
-                    p.getBoolean("hud_gpu",true),p.getBoolean("hud_cpu",true)));
+                status.setText(HudPresentation.text(mode,fps,gpu,cpu,true,true));
             } else {
                 fpsMeter.reset();
                 if(hudTelemetry!=null)hudTelemetry.reset();
@@ -298,6 +301,29 @@ public final class GameActivity extends Activity {
             env.put("GOW3_FSR1","0");
             env.put("GOW3_RCAS","0");
             PortSettings.environment(this,env);
+            DebugOverrides.apply(this,env);
+            // TLOU 01.11 interprets the reported 5056 MiB retail+debug pool
+            // as a devkit and reserves an EXTRA 768 MiB (the supplied device
+            // log fails here). Present the verified retail 4608 MiB size while
+            // preserving the full host backing pool and map layout.
+            File ready=new File(base,"device-ready.json");
+            if(ready.isFile()) {
+                org.json.JSONObject profile=new org.json.JSONObject(new String(
+                    Files.readAllBytes(ready.toPath()),StandardCharsets.UTF_8));
+                String gameVersion=profile.optString("update_version","");
+                if(gameVersion.isEmpty()||"null".equals(gameVersion))
+                    gameVersion=profile.optString("version","");
+                if("01.11".equals(gameVersion)){
+                    // Release 0.1.1 uses the validated universal zero-worker
+                    // preparation policy. Never override the launcher-wide zero
+                    // setting for game update 01.11 or a specific device.
+                    // Movie-plane compatibility applies only to 01.11 with resized NV12.
+                    if(env.containsKey("GOW3_MOVIE_SIZE"))
+                        env.put("TLOU_MOVIE_111_LAYOUT","1");
+                    env.put("GOW3_DMEM_REPORT_MB","4608");
+                    RunLog.write(this,"TLOU 01.11: retail direct memory reported=4608 MiB (pool capacity unchanged)");
+                }
+            }
             RunLog.write(this,PortSettings.experimentReport(this,env));
             String driver=getSharedPreferences("tlou",MODE_PRIVATE).getString("driver_path", "");
             if(!driver.isEmpty()) {
@@ -309,7 +335,7 @@ public final class GameActivity extends Activity {
             }
             builder.directory(app0);
             builder.redirectErrorStream(true);
-            builder.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile));
+            builder.redirectOutput(ProcessBuilder.Redirect.appendTo(DebugOverrides.runtimeLog(this,env,logFile)));
             RunLog.write(this,"Comando: "+args+"\nLD_LIBRARY_PATH="+env.get("LD_LIBRARY_PATH")+"\nDriver="+env.get("GOW3_VULKAN_DRIVER"));
             update("Iniciando TLOU x86-64 pelo FEX...");
             if(closing.get())return;
@@ -320,10 +346,9 @@ public final class GameActivity extends Activity {
             RunLog.write(this,"Processo FEX criado");
             final int result=game.waitFor();
             RunLog.write(this,"Processo FEX finalizado: código "+result);
-            if (!closing.get()) {
-                String message="Runtime finalizado (código "+result+"). Veja o log.";
-                update(message);
-                error(message+"\n"+tailLog());
+            if(!closing.get()) {
+                if(result==0)handler.post(this::stopAndExit);
+                else error("Runtime encerrou com código "+result);
             }
         } catch (Throwable err) {
             RunLog.failure(this,"Falha ao executar FEX",err);
@@ -391,7 +416,7 @@ public final class GameActivity extends Activity {
         if(playerMenu!=null && playerMenu.isShowing())return;
         touch.release();pad.reset(); // release held inputs; keep the controller/provider connected
         playerMenu=new PortMenu(this,true,new PortMenu.Actions(){
-            public void logs(){showLog();}public void exportLogs(){}public void chooseGame(){}public void installPkg(){}
+            public void logs(){showLog();}public void exportLogs(){GameActivity.this.exportLogs();}public void chooseGame(){}public void installPkg(){}
             public void importDriver(){}public void selectDriver(){}
             public void editControls(){editingControls=true;touch.setVisibility(View.VISIBLE);touch.setAlpha(.9f);touch.edit(()->{editingControls=false;applyLiveSettings();});}
             public void resetControls(){touch.resetLayout();applyLiveSettings();}
@@ -418,10 +443,26 @@ public final class GameActivity extends Activity {
 
     private String tailLog() { return RunLog.tail(RunLog.runtime(this),12000); }
 
+    private static final int EXPORT_LOGS_REQUEST=811;
     private void showLog() {
-        android.widget.ScrollView scroll=new android.widget.ScrollView(this);
-        TextView text=new TextView(this);text.setText(RunLog.summary(this));text.setTextIsSelectable(true);text.setTextSize(12);text.setPadding(24,16,24,16);scroll.addView(text);
-        new AlertDialog.Builder(this).setTitle(TlouLanguage.t(this,"TLOU — logs")).setView(scroll).setPositiveButton(TlouLanguage.t(this,"Fechar"),null).show();
+        TlouDialogs.showLogs(this,RunLog.summary(this),this::exportLogs);
+    }
+    private void exportLogs() {
+        android.content.Intent save=new android.content.Intent(android.content.Intent.ACTION_CREATE_DOCUMENT);
+        save.setType("application/zip");
+        save.addCategory(android.content.Intent.CATEGORY_OPENABLE);
+        save.putExtra(android.content.Intent.EXTRA_TITLE,"TLOU-Android-Logs.zip");
+        startActivityForResult(save,EXPORT_LOGS_REQUEST);
+    }
+    @Override protected void onActivityResult(int code,int resultCode,android.content.Intent data) {
+        super.onActivityResult(code,resultCode,data);
+        if(code!=EXPORT_LOGS_REQUEST || resultCode!=RESULT_OK || data==null || data.getData()==null)return;
+        try(java.io.OutputStream output=getContentResolver().openOutputStream(data.getData())) {
+            if(output==null)throw new IOException("Destino indisponível");
+            RunLog.export(this,output);
+        } catch(Exception error) {
+            android.widget.Toast.makeText(this,"Falha ao exportar logs: "+error.getMessage(),android.widget.Toast.LENGTH_LONG).show();
+        }
     }
 
     private void stopAndExit() { stopAndExit(false); }

@@ -29,6 +29,7 @@
 #include "imgui/renderer/texture_manager.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_vulkan/tlou_deferred_signal_wait.h"
 #include "gow3_threads.h"
 
 namespace Vulkan {
@@ -205,6 +206,8 @@ void Scheduler::SignalAfterHostCopies(std::function<void()> signal) {
         Gow3Copy::AfterCopies([signal = std::move(signal), done = std::move(done)] {
             signal();
             done->fetch_add(1, std::memory_order_release);
+            // Wake target-sequence waiters without draining unrelated new copies.
+            done->notify_all();
         });
     });
     KickRecording(true);
@@ -277,11 +280,14 @@ void Scheduler::WaitDeferredSignals() {
     Gow3Stats::WaitTimer timer{Gow3Stats::host_copies_wait_ns};
     const auto start = std::chrono::steady_clock::now();
     KickRecording(true);
-    while (deferred_signals_done->load(std::memory_order_acquire) < issued) {
-        // Helps the copy threads the signals wait for.
-        Gow3Copy::WaitAsync();
-        std::this_thread::yield();
-    }
+    // The former WaitAsync() inside this loop waited for global pool IDLE,
+    // including host uploads queued *after* the requested fence. This was an
+    // unnecessary serial barrier in the 01.11 scenes that fell to 10-30 FPS.
+    // Wait only for the captured signal sequence. Workers execute copies
+    // independently; when workers are disabled we still help their queue.
+    Detail::WaitForDeferredSignal(*deferred_signals_done, issued,
+                                  Gow3Copy::Enabled(),
+                                  [] { Gow3Copy::WaitAsync(); });
     if (OrderWaitStatsEnabled()) {
         NoteOrderWait(0, start);
     }
@@ -739,10 +745,25 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
     const vk::Semaphore timeline = work_semaphore.Handle();
     info.AddSignal(timeline, signal_value);
 
-    static constexpr std::array<vk::PipelineStageFlags, 2> wait_stage_masks = {
+    // VkSubmitInfo requires one stage mask PER wait semaphore. SubmitInfo
+    // holds four, but the old mask array held only two; a third wait read
+    // past the end of the array inside the Vulkan driver (undefined behavior).
+    static constexpr std::array<vk::PipelineStageFlags, 4> wait_stage_masks = {
         vk::PipelineStageFlagBits::eAllCommands,
         vk::PipelineStageFlagBits::eColorAttachmentOutput,
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::PipelineStageFlagBits::eAllCommands,
     };
+    static_assert(wait_stage_masks.size() == std::tuple_size_v<decltype(SubmitInfo::wait_semas)>);
+    if (info.num_wait_semas > 2) {
+        // Only the exceptional case that previously read past the stage-mask
+        // table. Do not turn on per-submit logging in the normal draw path.
+        static std::atomic<u32> unusual_waits_reported{0};
+        if (unusual_waits_reported.fetch_add(1, std::memory_order_relaxed) < 8) {
+            std::printf("GPU submit: %u wait semaphores (four-mask safety path)\n",
+                        info.num_wait_semas);
+        }
+    }
 
     const vk::TimelineSemaphoreSubmitInfo timeline_si = {
         .waitSemaphoreValueCount = info.num_wait_semas,

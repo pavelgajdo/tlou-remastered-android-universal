@@ -49,10 +49,10 @@ with zipfile.ZipFile(sys.argv[1]) as apk:
     # launcher resources; a successful Java compile alone is not enough.
     import hashlib
     drivers = {
-        'assets/drivers/turnip-v27-r1-a6xx-a7xx.zip':
-            '07938ef843a73dd47ebb88ba9c2d3bca011667bd2b657e3b4a75d9ba8ed591a0',
-        'assets/drivers/turnip-gen8-v38-patched-a8xx.zip':
-            '2bbb279a3da7680503a54a51a3051c7a4302c8fb2a089f8b183b4b5d6ba9ac17',
+        'assets/drivers/turnip-v27-r2-a6xx-a7xx.zip':
+            '8d30be022582d0c03b1918c019540491d00439e14e9e5e1359fe0bb19004f781',
+        'assets/drivers/turnip-gen8-v39-patched-a8xx.zip':
+            'bd457b30f195cf93a334b5302c221b1b5cb59c79c485935decf95d560a38c8a2',
     }
     for name, expected in drivers.items():
         data = apk.read(name)

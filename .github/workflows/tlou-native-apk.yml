@@ -83,7 +83,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: TLOU-v01-native-ui-tests
+          name: TLOU-v011-native-ui-tests
           path: android-launcher/app/build/reports/**
           if-no-files-found: ignore
       - uses: android-actions/setup-android@v3
@@ -176,15 +176,15 @@ jobs:
         run: bash android/bionic/package_apk.sh
       - name: Verify APK payload and native dependency closure
         if: ${{ !contains(github.event.head_commit.message, '[native-only]') }}
-        run: python3 android/bionic/check_tools_apk.py out/release/TheLastOfUsRemastered-Android-v0.1-arm64.apk
+        run: python3 android/bionic/check_tools_apk.py out/release/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk
       - name: Publish installable TLOU APK
         if: ${{ !contains(github.event.head_commit.message, '[native-only]') }}
         uses: actions/upload-artifact@v4
         with:
-          name: TheLastOfUsRemastered-Android-v0.1-arm64
+          name: TheLastOfUsRemastered-Android-v0.1.1-arm64
           path: |
-            out/release/TheLastOfUsRemastered-Android-v0.1-arm64.apk
-            out/release/TheLastOfUsRemastered-Android-v0.1-arm64.apk.sha256
+            out/release/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk
+            out/release/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk.sha256
           if-no-files-found: error
       - name: Publish built native binaries
         uses: actions/upload-artifact@v4
@@ -224,21 +224,25 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: TheLastOfUsRemastered-Android-v0.1-arm64
+          name: TheLastOfUsRemastered-Android-v0.1.1-arm64
           path: built
       - name: Tag and publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: v0.1-universal.${{ github.run_number }}
+          TAG: v0.1.1-universal.${{ github.run_number }}
         run: |
           apk="TLOU-Remastered-Universal-$TAG-arm64.apk"
-          cp built/TheLastOfUsRemastered-Android-v0.1-arm64.apk "$apk"
+          cp built/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk "$apk"
           sha256sum "$apk" > "$apk.sha256"
           cat > notes.md <<'NOTES'
           TLOU Remastered Universal: the Android port with support for GPUs beyond Adreno.
 
           - BC4/BC5/BC6H/BC7 textures (BC1-BC7 on Mali) are decoded on the GPU when the driver cannot sample them. This fixes black and garbled textures on Samsung Xclipse (Exynos) with the system driver.
           - Installs next to the original app (app id `com.daedalus.tlou.remastered.universal`). Export your saves from the original app and import them here.
+
+          Based on upstream v0.1.1 (erickmendes22/tlou-remastered-android).
+
+          Debugging: `/sdcard/Android/data/com.daedalus.tlou.remastered.universal/files/env.txt` (KEY=VALUE lines) adds runtime environment variables, and `toggles.txt` there sets the runtime's disabled-optimizations mask while the game runs.
 
           Pre-release: not yet confirmed on every device. Report problems with the logs ZIP (About, Export logs ZIP).
           NOTES
@@ -274,7 +278,7 @@ jobs:
           python3 gow3_pc/tests/test_android_save_choice.py
       - name: Android dialog regression tests and release lint
         run: gradle -p android-launcher :app:testReleaseUnitTest :app:lintVitalRelease --no-daemon --max-workers=2
-      - name: Download exact successful v0.1 APK
+      - name: Download pinned compatible v0.1 APK as launcher-reuse input
         uses: actions/download-artifact@v4
         with:
           name: TheLastOfUsRemastered-Android-v0.1-arm64
@@ -295,7 +299,7 @@ jobs:
           gradle -p android-launcher :app:assembleRelease --no-daemon --max-workers=2
           sdk_tools="$ANDROID_HOME/build-tools/35.0.0"
           mkdir -p out/release
-          apk=out/release/TheLastOfUsRemastered-Android-v0.1-arm64.apk
+          apk=out/release/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk
           "$sdk_tools/zipalign" -f -p 4 android-launcher/app/build/outputs/apk/release/app-release-unsigned.apk out/aligned.apk
           "$sdk_tools/apksigner" sign --ks out/android-bionic/experimental-development.jks --ks-key-alias tlou-bionic --ks-pass pass:TLOU-Bionic-development --key-pass pass:TLOU-Bionic-development --out "$apk" out/aligned.apk
           "$sdk_tools/apksigner" verify --verbose "$apk"
@@ -306,14 +310,14 @@ jobs:
           sha256sum "$apk" > "$apk.sha256"
       - name: Validate final APK and byte-identical native payload
         run: |
-          python3 android/bionic/check_tools_apk.py out/release/TheLastOfUsRemastered-Android-v0.1-arm64.apk
+          python3 android/bionic/check_tools_apk.py out/release/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk
           python3 - <<'PYCODE'
           import zipfile
           from pathlib import Path
           import importlib.util
           spec=importlib.util.spec_from_file_location('reuse','android/bionic/reuse_apk.py')
           reuse=importlib.util.module_from_spec(spec);spec.loader.exec_module(reuse)
-          with zipfile.ZipFile('out/source-apk/TheLastOfUsRemastered-Android-v0.1-arm64.apk') as old, zipfile.ZipFile('out/release/TheLastOfUsRemastered-Android-v0.1-arm64.apk') as new:
+          with zipfile.ZipFile('out/source-apk/TheLastOfUsRemastered-Android-v0.1-arm64.apk') as old, zipfile.ZipFile('out/release/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk') as new:
               names=[n for n in old.namelist() if reuse.payload(n) is not None and not n.endswith('/')]
               assert names
               for n in names:
@@ -328,13 +332,13 @@ jobs:
           PYCODE
       - uses: actions/upload-artifact@v4
         with:
-          name: TheLastOfUsRemastered-Android-v0.1-arm64
+          name: TheLastOfUsRemastered-Android-v0.1.1-arm64
           path: out/release/*
           if-no-files-found: error
       - name: Save UI tests and diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: TLOU-v01-launcher-tests
+          name: TLOU-v011-launcher-tests
           path: android-launcher/app/build/reports/**
           if-no-files-found: ignore
