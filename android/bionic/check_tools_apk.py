@@ -45,19 +45,7 @@ with zipfile.ZipFile(sys.argv[1]) as apk:
         for method in ('nativeStart', 'nativeSetSurface', 'nativeFrames', 'nativeSetFullscreen', 'nativeSetAdrenoTurbo', 'nativeShutdown'):
             if 'Java_ro_cobrabm_fexdroid_Gow3Present_'+method not in symbols:
                 raise ValueError(f'Packaged presenter lacks JNI {method}')
-    # The v0.1 build must ship BOTH pinned Adreno generations plus localized
-    # launcher resources; a successful Java compile alone is not enough.
-    import hashlib
-    drivers = {
-        'assets/drivers/turnip-v27-r2-a6xx-a7xx.zip':
-            '8d30be022582d0c03b1918c019540491d00439e14e9e5e1359fe0bb19004f781',
-        'assets/drivers/turnip-gen8-v39-patched-a8xx.zip':
-            'bd457b30f195cf93a334b5302c221b1b5cb59c79c485935decf95d560a38c8a2',
-    }
-    for name, expected in drivers.items():
-        data = apk.read(name)
-        if hashlib.sha256(data).hexdigest() != expected:
-            raise ValueError(f'Incorrect driver digest: {name}')
+    # Universal fork: no bundled Adreno drivers (the system driver or an imported one is used).
     ui_rows = apk.read('assets/ui-translations.tsv').decode('utf-8').splitlines()
     ui_rows = [line for line in ui_rows if line and not line.startswith('#')]
     if not ui_rows or any(len(line.split(chr(9))) != 10 for line in ui_rows):
