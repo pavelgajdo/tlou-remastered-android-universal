@@ -333,6 +333,7 @@ public final class GameActivity extends Activity {
                 env.put("GOW3_VULKAN_DRIVER",custom.getAbsolutePath());
                 env.put("LD_LIBRARY_PATH",custom.getParent()+":"+getApplicationInfo().nativeLibraryDir);
             }
+            DebugOverrides.overrideLibraries(this,env);
             builder.directory(app0);
             builder.redirectErrorStream(true);
             builder.redirectOutput(ProcessBuilder.Redirect.appendTo(DebugOverrides.runtimeLog(this,env,logFile)));

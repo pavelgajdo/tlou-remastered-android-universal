@@ -36,6 +36,9 @@ jobs:
     if: needs.changes.outputs.interface_only != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
+    permissions:
+      contents: write
+      actions: read
     env:
       TLOU_JOBS: '3'
       TLOU_ANDROID_API: '30'
@@ -186,6 +189,24 @@ jobs:
             out/release/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk
             out/release/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk.sha256
           if-no-files-found: error
+      # Universal fork: what a local (Windows) build of libgow3gpu.so needs from this machine,
+      # downloadable without a login from the `build-deps` pre-release.
+      - name: Publish build dependencies for local renderer builds
+        if: github.event_name == 'push' && github.ref == 'refs/heads/universal'
+        shell: bash -el {0}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tar -C .local-deps/android -czf bionic-prefix.tar.gz bionic-prefix
+          (cd "$CONDA_PREFIX" && tar -czf "$GITHUB_WORKSPACE/host-headers.tar.gz" include $(ls -d lib/cmake share/cmake* lib/pkgconfig share/pkgconfig 2>/dev/null))
+          cp out/android-bionic/gpu/CMakeCache.txt gpu-CMakeCache.txt
+          ls -la bionic-prefix.tar.gz host-headers.tar.gz
+          gh release view build-deps --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create build-deps --repo "$GITHUB_REPOSITORY" --prerelease \
+              --title "Build dependencies for local renderer builds" \
+              --notes "Android ARM64 dependency prefix and host headers from CI, for building libgow3gpu.so locally. Overwritten by every build of the universal branch."
+          gh release upload build-deps bionic-prefix.tar.gz host-headers.tar.gz gpu-CMakeCache.txt \
+            --repo "$GITHUB_REPOSITORY" --clobber
       - name: Publish built native binaries
         uses: actions/upload-artifact@v4
         with:

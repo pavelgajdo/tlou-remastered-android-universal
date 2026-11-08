@@ -5,6 +5,8 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.Map;
 
 /**
@@ -37,6 +39,36 @@ final class DebugOverrides {
             return;
         }
         RunLog.write(context, "env.txt:" + applied);
+    }
+
+    /**
+     * Native libraries in override/ (for example a locally built libgow3gpu.so) are copied into
+     * app storage, where they may be loaded, and searched before the APK's. Without the folder
+     * the copies are removed and the APK's libraries load again.
+     */
+    static void overrideLibraries(Context context, Map<String, String> env) {
+        File dir = context.getExternalFilesDir(null);
+        File target = new File(context.getFilesDir(), "override");
+        File[] old = target.listFiles();
+        if (old != null) for (File f : old) f.delete();
+        File[] libs = dir == null ? null
+                : new File(dir, "override").listFiles((d, name) -> name.endsWith(".so"));
+        if (libs == null || libs.length == 0) return;
+        StringBuilder names = new StringBuilder();
+        try {
+            Files.createDirectories(target.toPath());
+            for (File lib : libs) {
+                Files.copy(lib.toPath(), new File(target, lib.getName()).toPath(),
+                        StandardCopyOption.REPLACE_EXISTING);
+                names.append(' ').append(lib.getName()).append(" (").append(lib.length()).append(" bytes)");
+            }
+        } catch (IOException e) {
+            RunLog.write(context, "override libraries not copied: " + e);
+            return;
+        }
+        String path = env.get("LD_LIBRARY_PATH");
+        env.put("LD_LIBRARY_PATH", target.getAbsolutePath() + (path == null ? "" : ":" + path));
+        RunLog.write(context, "override libraries:" + names);
     }
 
     static File runtimeLog(Context context, Map<String, String> env, File normal) {
