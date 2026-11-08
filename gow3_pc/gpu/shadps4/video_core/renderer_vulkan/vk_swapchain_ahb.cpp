@@ -26,6 +26,21 @@ constexpr u64 AhbUsage = AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT |
                          AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE |
                          AHARDWAREBUFFER_USAGE_COMPOSER_OVERLAY;
 
+/// Universal fork: Mesa's RADV cannot ask a vendor gralloc (Samsung's, for Xclipse) for the
+/// buffer's tiling and falls back to its own assumption; it then renders in another layout than
+/// the composer reads, and the screen stays black. CPU usage makes gralloc allocate a linear
+/// buffer, which every driver reads the same way. On RADV by default; GOW3_AHB_LINEAR=0/1
+/// switches it off or on for any driver.
+u64 AhbUsageFor(vk::DriverId driver) {
+    bool linear = driver == vk::DriverId::eMesaRadv;
+    if (const char* value = std::getenv("GOW3_AHB_LINEAR")) {
+        linear = value[0] == '1';
+    }
+    return linear ? AhbUsage | AHARDWAREBUFFER_USAGE_CPU_READ_RARELY |
+                        AHARDWAREBUFFER_USAGE_CPU_WRITE_RARELY
+                  : AhbUsage;
+}
+
 /// GOW3_PRESENT_BUFFERS: the number of buffers (3 by default: one shown, one pending, one rendered).
 u32 BufferCount() {
     if (const char* value = std::getenv("GOW3_PRESENT_BUFFERS")) {
@@ -151,11 +166,19 @@ void Swapchain::CreateBuffer(u32 index) {
         .height = height,
         .layers = 1,
         .format = AhbFormat,
-        .usage = AhbUsage,
+        .usage = AhbUsageFor(instance.GetDriverID()),
     };
     const int allocated = AHardwareBuffer_allocate(&desc, &buffer.ahb);
     ASSERT_MSG(allocated == 0 && buffer.ahb, "AHardwareBuffer_allocate {}x{} failed: {}", width,
                height, allocated);
+    if (index == 0) {
+        AHardwareBuffer_Desc got{};
+        AHardwareBuffer_describe(buffer.ahb, &got);
+        std::printf("Present: AHB %ux%u stride %u usage %#llx (%s)\n", got.width, got.height,
+                    got.stride, static_cast<unsigned long long>(got.usage),
+                    (desc.usage & AHARDWAREBUFFER_USAGE_CPU_READ_RARELY) ? "linear request"
+                                                                         : "driver layout");
+    }
 
     auto [props_result, props_chain] = device.getAndroidHardwareBufferPropertiesANDROID<
         vk::AndroidHardwareBufferPropertiesANDROID, vk::AndroidHardwareBufferFormatPropertiesANDROID>(
