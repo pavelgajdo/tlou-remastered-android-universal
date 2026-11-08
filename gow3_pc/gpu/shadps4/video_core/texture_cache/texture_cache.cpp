@@ -1151,7 +1151,19 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
                image.info.guest_size == info.guest_size && image.info.size == info.size &&
                image.info.pixel_format == info.pixel_format;
     };
-    if ((cached.generation == registry_generation.load(std::memory_order_relaxed) || still_exact()) &&
+    // Universal fork: of several images with the same address and description, the one the GPU
+    // wrote last holds the current contents; when they cannot be copied into each other
+    // (SynchronizeAlias), returning another showed an old frame from a different camera
+    // every few frames on Xclipse. TLOU_ALIAS_NEWEST=0 restores the previous choice.
+    static const bool alias_newest = [] {
+        const char* env = std::getenv("TLOU_ALIAS_NEWEST");
+        return !(env && env[0] == '0');
+    }();
+    const bool cached_alias = alias_newest && cached.image_id &&
+                              slot_images.is_allocated(cached.image_id) &&
+                              True(slot_images[cached.image_id].flags & ImageFlagBits::Aliased);
+    if (!cached_alias &&
+        (cached.generation == registry_generation.load(std::memory_order_relaxed) || still_exact()) &&
         cached.address == info.guest_address &&
         cached.size == info.guest_size && cached.extent == info.size &&
         cached.format == info.pixel_format && cached.type == info.type &&
@@ -1196,6 +1208,10 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
             continue;
         }
         if (exact_fmt && info.pixel_format != cache_image.info.pixel_format) {
+            continue;
+        }
+        if (alias_newest && image_id &&
+            cache_image.alias_generation < slot_images[image_id].alias_generation) {
             continue;
         }
         image_id = cache_id;
@@ -1319,11 +1335,17 @@ ImageId TextureCache::FindImageFromRange(VAddr address, size_t size, bool ensure
         return image_ids.back();
     }
     if (!image_ids.empty()) {
+        // Universal fork: the matching image the GPU wrote last (see FindImage).
+        ImageId found{};
         for (s32 i = 0; i < image_ids.size(); ++i) {
             Image& image = slot_images[image_ids[i]];
-            if (image.info.guest_size == size) {
-                return image_ids[i];
+            if (image.info.guest_size == size &&
+                (!found || image.alias_generation > slot_images[found].alias_generation)) {
+                found = image_ids[i];
             }
+        }
+        if (found) {
+            return found;
         }
         LOG_WARNING(Render_Vulkan,
                     "Failed to find exact image match for copy addr={:#x}, size={:#x}", address,
